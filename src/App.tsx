@@ -1,35 +1,46 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useState } from 'react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 
-function App() {
-  const [count, setCount] = useState(0)
+import { Droplets, Calendar, Activity, BarChart3, Settings as SettingsIcon } from 'lucide-react';
+
+export default function App() {
+  const [recordingFrequency, setRecordingFrequency] = useState(60); // minutes
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100">
+      <div className="container mx-auto px-4 py-8">
+        <div className="mb-8 text-center">
+          <h1 className="text-emerald-800 mb-2">Sistema de Monitoreo de Orquídeas</h1>
+          <p className="text-emerald-600">Cuida tus orquídeas con tecnología inteligente</p>
+        </div>
 
-export default App
+        <Tabs defaultValue="dashboard" className="w-full">
+          <TabsList className="grid w-full grid-cols-5 mb-8">
+            <TabsTrigger value="dashboard" className="flex items-center gap-2">
+              <Droplets className="w-4 h-4" />
+              <span className="hidden sm:inline">Dashboard</span>
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              <span className="hidden sm:inline">Calendario</span>
+            </TabsTrigger>
+            <TabsTrigger value="sensors" className="flex items-center gap-2">
+              <Activity className="w-4 h-4" />
+              <span className="hidden sm:inline">Sensores</span>
+            </TabsTrigger>
+            <TabsTrigger value="historical" className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              <span className="hidden sm:inline">Histórico</span>
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="flex items-center gap-2">
+              <SettingsIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">Configuración</span>
+            </TabsTrigger>
+          </TabsList>
+
+         
+        </Tabs>
+      </div>
+    </div>
+  );
+}
