@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 
+import { WateringCalendar } from './components/WateringCalendar';
+import { SensorMonitoring } from './components/SensorMonitoring';
+
+import { Settings } from './components/Settings';
 import { Droplets, Calendar, Activity, BarChart3, Settings as SettingsIcon } from 'lucide-react';
 
 export default function App() {
@@ -38,7 +42,28 @@ export default function App() {
             </TabsTrigger>
           </TabsList>
 
-         
+          <TabsContent value="dashboard">
+            
+          </TabsContent>
+
+          <TabsContent value="calendar">
+            <WateringCalendar />
+          </TabsContent>
+
+          <TabsContent value="sensors">
+            <SensorMonitoring />
+          </TabsContent>
+
+          <TabsContent value="historical">
+            
+          </TabsContent>
+
+          <TabsContent value="settings">
+            <Settings 
+              recordingFrequency={recordingFrequency}
+              setRecordingFrequency={setRecordingFrequency}
+            />
+          </TabsContent>
         </Tabs>
       </div>
     </div>
