@@ -1,84 +1,78 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Calendar } from './ui/calendar';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Droplets, Plus, Trash2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-
-interface WateringEvent {
-  id: string;
-  orchidName: string;
-  date: Date;
-  frequency: number; // days
-}
+import { Droplets, Trash2, Loader2 } from 'lucide-react';
+import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
+import { useOrchids } from '../hooks/useOrchids';
+import { createWateringRecord, getWateringRecords, WateringRecord } from '../lib/firebase/firestore';
+import { toast } from 'sonner';
 
 export function WateringCalendar() {
+  const { user } = useFirebaseAuth();
+  const { orchids, loading: orchidsLoading, editOrchid } = useOrchids(user);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const [wateringEvents, setWateringEvents] = useState<WateringEvent[]>([
-    {
-      id: '1',
-      orchidName: 'Phalaenopsis Rosa',
-      date: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
-      frequency: 7,
-    },
-    {
-      id: '2',
-      orchidName: 'Cattleya Blanca',
-      date: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000),
-      frequency: 6,
-    },
-    {
-      id: '3',
-      orchidName: 'Dendrobium Púrpura',
-      date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      frequency: 5,
-    },
-  ]);
+  const [wateringRecords, setWateringRecords] = useState<WateringRecord[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [newOrchidName, setNewOrchidName] = useState('');
-  const [newFrequency, setNewFrequency] = useState('7');
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  useEffect(() => {
+    if (!user) return;
 
-  const addWateringEvent = () => {
-    if (!newOrchidName || !selectedDate) return;
-
-    const newEvent: WateringEvent = {
-      id: Date.now().toString(),
-      orchidName: newOrchidName,
-      date: selectedDate,
-      frequency: parseInt(newFrequency),
+    const loadWateringRecords = async () => {
+      try {
+        setLoading(true);
+        const records = await getWateringRecords(user.uid);
+        setWateringRecords(records);
+      } catch (error) {
+        console.error('Error loading watering records:', error);
+        toast.error('Error al cargar registros de riego');
+      } finally {
+        setLoading(false);
+      }
     };
 
-    setWateringEvents([...wateringEvents, newEvent]);
-    setNewOrchidName('');
-    setNewFrequency('7');
-    setIsDialogOpen(false);
-  };
+    loadWateringRecords();
+  }, [user]);
 
-  const deleteEvent = (id: string) => {
-    setWateringEvents(wateringEvents.filter(e => e.id !== id));
-  };
+  const markAsWatered = async (orchidId: string, orchidName: string, orchidFrequency: number) => {
+    if (!user) return;
 
-  const markAsWatered = (event: WateringEvent) => {
-    const nextDate = new Date(event.date);
-    nextDate.setDate(nextDate.getDate() + event.frequency);
+    try {
+      const now = new Date();
+      const nextWatering = new Date(now);
+      nextWatering.setDate(nextWatering.getDate() + orchidFrequency);
 
-    setWateringEvents(wateringEvents.map(e => 
-      e.id === event.id ? { ...e, date: nextDate } : e
-    ));
+      // Create watering record
+      const record = await createWateringRecord({
+        orchidId,
+        orchidName,
+        date: now,
+        userId: user.uid,
+      });
+
+      // Update orchid
+      await editOrchid(orchidId, {
+        lastWatered: now,
+        nextWatering: nextWatering,
+      });
+
+      // Update local state
+      setWateringRecords([...wateringRecords, record as WateringRecord]);
+      
+      toast.success(`${orchidName} regada exitosamente`);
+    } catch (error: any) {
+      toast.error(error.message || 'Error al registrar riego');
+    }
   };
 
   const getEventsForDate = (date: Date) => {
-    return wateringEvents.filter(event => {
-      const eventDate = new Date(event.date);
+    return orchids.filter(orchid => {
+      const nextWatering = new Date(orchid.nextWatering);
       return (
-        eventDate.getDate() === date.getDate() &&
-        eventDate.getMonth() === date.getMonth() &&
-        eventDate.getFullYear() === date.getFullYear()
+        nextWatering.getDate() === date.getDate() &&
+        nextWatering.getMonth() === date.getMonth() &&
+        nextWatering.getFullYear() === date.getFullYear()
       );
     });
   };
@@ -86,7 +80,7 @@ export function WateringCalendar() {
   const selectedDateEvents = selectedDate ? getEventsForDate(selectedDate) : [];
 
   const modifiers = {
-    watering: wateringEvents.map(e => e.date),
+    watering: orchids.map(o => o.nextWatering),
   };
 
   const modifiersStyles = {
@@ -96,6 +90,14 @@ export function WateringCalendar() {
       fontWeight: 'bold',
     },
   };
+
+  if (loading || orchidsLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -133,51 +135,6 @@ export function WateringCalendar() {
                   })}
                 </CardDescription>
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Agregar
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Agregar Orquídea al Calendario</DialogTitle>
-                    <DialogDescription>
-                      Configura el calendario de riego para una nueva orquídea
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Nombre de la Orquídea</Label>
-                      <Input
-                        id="name"
-                        placeholder="Ej: Phalaenopsis Rosa"
-                        value={newOrchidName}
-                        onChange={(e) => setNewOrchidName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="frequency">Frecuencia de Riego</Label>
-                      <Select value={newFrequency} onValueChange={setNewFrequency}>
-                        <SelectTrigger id="frequency">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="3">Cada 3 días</SelectItem>
-                          <SelectItem value="5">Cada 5 días</SelectItem>
-                          <SelectItem value="7">Cada 7 días</SelectItem>
-                          <SelectItem value="10">Cada 10 días</SelectItem>
-                          <SelectItem value="14">Cada 14 días</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <Button onClick={addWateringEvent} className="w-full">
-                    Agregar al Calendario
-                  </Button>
-                </DialogContent>
-              </Dialog>
             </div>
           </CardHeader>
           <CardContent>
@@ -187,19 +144,19 @@ export function WateringCalendar() {
               </p>
             ) : (
               <div className="space-y-3">
-                {selectedDateEvents.map(event => {
-                  const isPast = event.date < new Date();
+                {selectedDateEvents.map(orchid => {
+                  const isPast = orchid.nextWatering < new Date();
                   return (
                     <div
-                      key={event.id}
+                      key={orchid.id}
                       className="flex items-center justify-between p-4 border rounded-lg bg-card"
                     >
                       <div className="flex items-center gap-3">
                         <Droplets className={`w-5 h-5 ${isPast ? 'text-red-500' : 'text-emerald-500'}`} />
                         <div>
-                          <p>{event.orchidName}</p>
+                          <p>{orchid.name}</p>
                           <p className="text-muted-foreground">
-                            Cada {event.frequency} días
+                            Cada {orchid.wateringFrequency} días
                           </p>
                         </div>
                       </div>
@@ -210,16 +167,9 @@ export function WateringCalendar() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => markAsWatered(event)}
+                          onClick={() => orchid.id && markAsWatered(orchid.id, orchid.name, orchid.wateringFrequency)}
                         >
                           Regado
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => deleteEvent(event.id)}
-                        >
-                          <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
                       </div>
                     </div>
@@ -235,22 +185,63 @@ export function WateringCalendar() {
             <CardTitle>Próximos Riegos</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              {wateringEvents
-                .sort((a, b) => a.date.getTime() - b.date.getTime())
-                .slice(0, 5)
-                .map(event => (
-                  <div key={event.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <span>{event.orchidName}</span>
-                    <span className="text-muted-foreground">
-                      {event.date.toLocaleDateString('es-ES', {
-                        day: 'numeric',
-                        month: 'short',
-                      })}
-                    </span>
-                  </div>
-                ))}
-            </div>
+            {orchids.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">
+                No hay orquídeas registradas
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {orchids
+                  .sort((a, b) => a.nextWatering.getTime() - b.nextWatering.getTime())
+                  .slice(0, 5)
+                  .map(orchid => (
+                    <div key={orchid.id} className="flex items-center justify-between py-2 border-b last:border-0">
+                      <span>{orchid.name}</span>
+                      <span className="text-muted-foreground">
+                        {orchid.nextWatering.toLocaleDateString('es-ES', {
+                          day: 'numeric',
+                          month: 'short',
+                        })}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Historial Reciente</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {wateringRecords.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">
+                No hay registros de riego aún
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {wateringRecords
+                  .sort((a, b) => b.date.getTime() - a.date.getTime())
+                  .slice(0, 10)
+                  .map(record => (
+                    <div key={record.id} className="flex items-center justify-between py-2 border-b last:border-0">
+                      <div className="flex items-center gap-2">
+                        <Droplets className="w-4 h-4 text-blue-500" />
+                        <span>{record.orchidName}</span>
+                      </div>
+                      <span className="text-muted-foreground text-sm">
+                        {record.date.toLocaleDateString('es-ES', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
