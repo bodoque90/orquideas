@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 
 import { Droplets, Calendar, Activity, BarChart3, Settings as SettingsIcon } from 'lucide-react';
+import { Dashboard } from './components/Dashboard';
+import { SensorMonitoring } from './components/SensorMonitoring';
+import { WateringCalendar } from './components/WateringCalendar';
+import { Settings } from './components/Settings';
 
 export default function App() {
   const [recordingFrequency, setRecordingFrequency] = useState(60); // minutes
@@ -38,7 +42,26 @@ export default function App() {
             </TabsTrigger>
           </TabsList>
 
-         
+          <TabsContent value="dashboard">
+            <Dashboard />
+          </TabsContent>
+
+          <TabsContent value="calendar">
+            <WateringCalendar />
+          </TabsContent>
+
+          <TabsContent value="sensors">
+            <SensorMonitoring />
+          </TabsContent>
+
+          <TabsContent value="historical">
+            <div className="p-4">Histórico (próximamente)</div>
+          </TabsContent>
+
+          <TabsContent value="settings">
+            <Settings recordingFrequency={recordingFrequency} setRecordingFrequency={setRecordingFrequency} />
+          </TabsContent>
+
         </Tabs>
       </div>
     </div>
