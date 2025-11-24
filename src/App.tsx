@@ -95,8 +95,6 @@ export default function App() {
 
             <TabsContent value="settings">
               <Settings 
-                recordingFrequency={recordingFrequency}
-                setRecordingFrequency={setRecordingFrequency}
               />
             </TabsContent>
           </Tabs>

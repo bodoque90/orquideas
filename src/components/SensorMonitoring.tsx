@@ -1,266 +1,168 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Bluetooth, Wifi, RefreshCw, Plus, Settings } from 'lucide-react';
+import { Wifi, Plus, Thermometer, Droplets, Loader2 } from 'lucide-react';
+import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
+import { subscribeToAllUserSensors, RealtimeSensorData, findUnclaimedSensors, claimSensor, UnclaimedSensor } from '../lib/firebase/realtime';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-
-interface Sensor {
-  id: string;
-  name: string;
-  type: 'bluetooth' | 'wifi';
-  connected: boolean;
-  battery: number;
-  lastReading: {
-    humidity: number;
-    temperature: number;
-    timestamp: Date;
-  };
-}
+import { toast } from 'sonner';
 
 export function SensorMonitoring() {
-  const [sensors, setSensors] = useState<Sensor[]>([
-    {
-      id: '1',
-      name: 'Sensor Invernadero',
-      type: 'wifi',
-      connected: true,
-      battery: 87,
-      lastReading: {
-        humidity: 65,
-        temperature: 22,
-        timestamp: new Date(),
-      },
-    },
-    {
-      id: '2',
-      name: 'Sensor Terraza',
-      type: 'bluetooth',
-      connected: true,
-      battery: 45,
-      lastReading: {
-        humidity: 58,
-        temperature: 24,
-        timestamp: new Date(),
-      },
-    },
-  ]);
-
+  const { user } = useFirebaseAuth();
+  const [sensors, setSensors] = useState<RealtimeSensorData[]>([]);
+  const [unclaimedSensors, setUnclaimedSensors] = useState<UnclaimedSensor[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [newSensorName, setNewSensorName] = useState('');
-  const [newSensorType, setNewSensorType] = useState<'bluetooth' | 'wifi'>('wifi');
 
+  // 1. Escuchar mis sensores ya vinculados
   useEffect(() => {
-    const interval = setInterval(() => {
-      setSensors(prev => prev.map(sensor => ({
-        ...sensor,
-        lastReading: {
-          humidity: Math.max(40, Math.min(80, sensor.lastReading.humidity + (Math.random() - 0.5) * 3)),
-          temperature: Math.max(18, Math.min(28, sensor.lastReading.temperature + (Math.random() - 0.5) * 0.8)),
-          timestamp: new Date(),
-        },
-      })));
-    }, 5000);
+    if (!user) return;
+    const unsubscribe = subscribeToAllUserSensors(user.uid, (data) => {
+      setSensors(data);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
-    return () => clearInterval(interval);
-  }, []);
-
-  const scanForSensors = () => {
+  // 2. Función para buscar nuevos sensores (abre el modal)
+  const handleScan = () => {
     setIsScanning(true);
-    setTimeout(() => {
+    setIsDialogOpen(true);
+    
+    // Escuchar la carpeta 'unclaimed_sensors'
+    const unsubscribe = findUnclaimedSensors((foundSensors) => {
+      setUnclaimedSensors(foundSensors);
       setIsScanning(false);
-    }, 3000);
+    });
+
+    // Limpiar suscripción al cerrar (esto es simplificado)
+    return unsubscribe;
   };
 
-  const addSensor = () => {
-    if (!newSensorName) return;
-
-    const newSensor: Sensor = {
-      id: Date.now().toString(),
-      name: newSensorName,
-      type: newSensorType,
-      connected: true,
-      battery: 100,
-      lastReading: {
-        humidity: 60 + Math.random() * 10,
-        temperature: 20 + Math.random() * 5,
-        timestamp: new Date(),
-      },
-    };
-
-    setSensors([...sensors, newSensor]);
-    setNewSensorName('');
-    setIsDialogOpen(false);
+  // 3. Función para vincular
+  const handleClaim = async (sensorId: string) => {
+    if (!user) return;
+    try {
+      await claimSensor(sensorId, user.uid);
+      toast.success("Vinculando sensor...", { description: "El dispositivo se reiniciará y aparecerá en tu lista en unos segundos." });
+      setIsDialogOpen(false); // Cerrar modal
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al vincular sensor");
+    }
   };
 
-  const toggleConnection = (id: string) => {
-    setSensors(sensors.map(s => 
-      s.id === id ? { ...s, connected: !s.connected } : s
-    ));
+  const isOnline = (timestamp: number) => {
+    return (Date.now() - timestamp) < 2 * 60 * 1000;
   };
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-emerald-800">Monitoreo de Sensores</h2>
-          <p className="text-muted-foreground">
-            Gestiona tus sensores de humedad y temperatura
-          </p>
+          <h2 className="text-emerald-800 text-2xl font-bold">Mis Sensores</h2>
+          <p className="text-muted-foreground">Gestión de dispositivos IoT</p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={scanForSensors}
-            disabled={isScanning}
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${isScanning ? 'animate-spin' : ''}`} />
-            {isScanning ? 'Buscando...' : 'Buscar Sensores'}
-          </Button>
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Agregar Sensor
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Agregar Nuevo Sensor</DialogTitle>
-                <DialogDescription>
-                  Configura un nuevo sensor de humedad para tus orquídeas
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sensor-name">Nombre del Sensor</Label>
-                  <Input
-                    id="sensor-name"
-                    placeholder="Ej: Sensor Jardín"
-                    value={newSensorName}
-                    onChange={(e) => setNewSensorName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sensor-type">Tipo de Conexión</Label>
-                  <Select 
-                    value={newSensorType} 
-                    onValueChange={(value) => setNewSensorType(value as 'bluetooth' | 'wifi')}
-                  >
-                    <SelectTrigger id="sensor-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="wifi">Wi-Fi</SelectItem>
-                      <SelectItem value="bluetooth">Bluetooth</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <Button onClick={addSensor} className="w-full">
-                Agregar Sensor
-              </Button>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2">
-        {sensors.map(sensor => (
-          <Card key={sensor.id} className="overflow-hidden">
-            <CardHeader className="bg-gradient-to-r from-blue-500 to-cyan-600 text-white">
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-white">{sensor.name}</CardTitle>
-                  <CardDescription className="text-blue-50 flex items-center gap-2 mt-2">
-                    {sensor.type === 'wifi' ? (
-                      <Wifi className="w-4 h-4" />
-                    ) : (
-                      <Bluetooth className="w-4 h-4" />
-                    )}
-                    {sensor.type === 'wifi' ? 'Wi-Fi' : 'Bluetooth'}
-                  </CardDescription>
-                </div>
-                <Badge 
-                  variant={sensor.connected ? 'default' : 'secondary'}
-                  className={sensor.connected ? 'bg-green-500' : 'bg-gray-500'}
-                >
-                  {sensor.connected ? 'Conectado' : 'Desconectado'}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-4 bg-blue-50 rounded-lg">
-                  <p className="text-muted-foreground mb-1">Humedad</p>
-                  <p className="text-blue-600">{sensor.lastReading.humidity.toFixed(1)}%</p>
-                </div>
-                <div className="text-center p-4 bg-orange-50 rounded-lg">
-                  <p className="text-muted-foreground mb-1">Temperatura</p>
-                  <p className="text-orange-600">{sensor.lastReading.temperature.toFixed(1)}°C</p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-muted-foreground">
-                  <span>Batería</span>
-                  <span className={sensor.battery < 20 ? 'text-red-500' : ''}>{sensor.battery}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all ${
-                      sensor.battery < 20 
-                        ? 'bg-red-500' 
-                        : sensor.battery < 50 
-                        ? 'bg-yellow-500' 
-                        : 'bg-green-500'
-                    }`}
-                    style={{ width: `${sensor.battery}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="pt-2 border-t">
-                <p className="text-muted-foreground">
-                  Última lectura: {sensor.lastReading.timestamp.toLocaleTimeString('es-ES')}
-                </p>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toggleConnection(sensor.id)}
-                  className="flex-1"
-                >
-                  {sensor.connected ? 'Desconectar' : 'Conectar'}
-                </Button>
-                <Button variant="outline" size="sm">
-                  <Settings className="w-4 h-4" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {sensors.length === 0 && (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground mb-4">
-              No hay sensores configurados
-            </p>
-            <Button onClick={() => setIsDialogOpen(true)}>
+        
+        {/* BOTÓN BUSCAR / AGREGAR */}
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={handleScan} className="bg-emerald-600 hover:bg-emerald-700">
               <Plus className="w-4 h-4 mr-2" />
-              Agregar Primer Sensor
+              Buscar Nuevo Sensor
             </Button>
-          </CardContent>
-        </Card>
-      )}
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Buscando dispositivos cercanos...</DialogTitle>
+              <DialogDescription>
+                Asegúrate de que tu sensor esté encendido y en modo configuración.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="py-4 space-y-4">
+              {isScanning && unclaimedSensors.length === 0 && (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+                </div>
+              )}
+
+              {!isScanning && unclaimedSensors.length === 0 && (
+                <p className="text-center text-muted-foreground">No se encontraron dispositivos nuevos.</p>
+              )}
+
+              {unclaimedSensors.map((device) => (
+                <div key={device.id} className="flex items-center justify-between p-4 border rounded-lg bg-slate-50">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white p-2 rounded-full shadow-sm">
+                      <Wifi className="w-5 h-5 text-blue-500" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm">{device.type}</p>
+                      <p className="text-xs text-muted-foreground font-mono">ID: {device.id}</p>
+                    </div>
+                  </div>
+                  <Button size="sm" onClick={() => handleClaim(device.id)}>
+                    Vincular
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {/* LISTA DE SENSORES YA VINCULADOS */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {loading ? (
+           <p>Cargando sensores...</p>
+        ) : sensors.length === 0 ? (
+           <Card className="col-span-2">
+             <CardContent className="py-12 text-center">
+               <p className="text-muted-foreground">No tienes sensores registrados.</p>
+             </CardContent>
+           </Card>
+        ) : (
+          sensors.map((sensor) => {
+              const online = isOnline(sensor.timestamp);
+              return (
+                <Card key={sensor.orchidId} className="overflow-hidden shadow-lg border-0">
+                  <CardHeader className={`${online ? 'bg-blue-500' : 'bg-gray-400'} text-white`}>
+                     <div className="flex justify-between items-center">
+                        <CardTitle className="text-white capitalize">
+                          {sensor.orchidId.replace('sensor_', 'Sensor ')}
+                        </CardTitle>
+                        <Badge className={online ? "bg-green-400 text-green-900" : "bg-gray-600 text-gray-200"}>
+                          {online ? "Online" : "Offline"}
+                        </Badge>
+                     </div>
+                  </CardHeader>
+                  <CardContent className="pt-6 bg-white">
+                     <div className="grid grid-cols-2 gap-4 text-center">
+                        <div className="bg-blue-50 p-3 rounded-xl">
+                          <div className="flex justify-center mb-1"><Droplets className="w-5 h-5 text-blue-500"/></div>
+                          <p className="text-muted-foreground text-xs font-bold uppercase">Humedad</p>
+                          <p className="text-xl font-bold text-blue-600">{sensor.humidity.toFixed(1)}%</p>
+                        </div>
+                        <div className="bg-orange-50 p-3 rounded-xl">
+                          <div className="flex justify-center mb-1"><Thermometer className="w-5 h-5 text-orange-500"/></div>
+                          <p className="text-muted-foreground text-xs font-bold uppercase">Temp</p>
+                          <p className="text-xl font-bold text-orange-600">{sensor.temperature.toFixed(1)}°C</p>
+                        </div>
+                     </div>
+                     {/* Datos extra del suelo y luz */}
+                     <div className="mt-4 pt-4 border-t flex justify-between text-xs text-gray-500">
+                        <span>Luz: {sensor.light}%</span>
+                        <span>Suelo: {sensor.soilMoisture}%</span>
+                     </div>
+                  </CardContent>
+                </Card>
+              );
+          })
+        )}
+      </div>
     </div>
   );
 }

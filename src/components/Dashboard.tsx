@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Droplets, Thermometer, Wind, AlertCircle, CheckCircle, Plus, Loader2 } from 'lucide-react';
+import { Droplets, Thermometer, Wind, AlertCircle, CheckCircle, Plus, Loader2, Link as LinkIcon, Unlink } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
 import { useOrchids } from '../hooks/useOrchids';
@@ -13,14 +13,19 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { toast } from 'sonner';
 import { FirebaseDebug } from './FirebaseDebug';
+// Importamos para obtener la lista de sensores
+import { subscribeToAllUserSensors, RealtimeSensorData } from '../lib/firebase/realtime';
 
 export function Dashboard() {
   const { user } = useFirebaseAuth();
-  const { orchids, loading, error, addOrchid } = useOrchids(user);
+  const { orchids, loading, error, addOrchid, editOrchid } = useOrchids(user); // Agregamos editOrchid
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  
+  // Estado para los sensores disponibles
+  const [availableSensors, setAvailableSensors] = useState<RealtimeSensorData[]>([]);
 
   // Form state
   const [newOrchid, setNewOrchid] = useState({
@@ -34,25 +39,20 @@ export function Dashboard() {
     const interval = setInterval(() => {
       setCurrentTime(new Date());
     }, 5000);
-
     return () => clearInterval(interval);
   }, []);
 
-  // Debug: mostrar errores
+  // Cargar lista de sensores para el dropdown de vinculación
   useEffect(() => {
-    if (error) {
-      console.error('Dashboard Error:', error);
-      toast.error(`Error: ${error}`);
-    }
-  }, [error]);
+    if (!user) return;
+    const unsubscribe = subscribeToAllUserSensors(user.uid, (data) => {
+      setAvailableSensors(data);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   const handleAddOrchid = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOrchid.name || !newOrchid.species) {
-      toast.error('Por favor completa todos los campos requeridos');
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       const now = new Date();
@@ -66,327 +66,254 @@ export function Dashboard() {
         wateringFrequency: newOrchid.wateringFrequency,
         lastWatered: now,
         nextWatering: nextWatering,
-        humidity: 65,
-        temperature: 22,
-        light: 75,
+        humidity: 0, 
+        temperature: 0,
+        light: 0,
       });
 
       toast.success(`¡${newOrchid.name} agregada exitosamente!`);
       setNewOrchid({ name: '', species: '', location: '', wateringFrequency: 7 });
       setIsDialogOpen(false);
     } catch (error: any) {
-      console.error('Error adding orchid:', error);
       toast.error(error.message || 'Error al agregar orquídea');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Mostrar error si hay problema con Firebase
-  if (error) {
-    return (
-      <div className="space-y-6">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error de Conexión</AlertTitle>
-          <AlertDescription>
-            No se pudo conectar a Firebase. Verifica tu configuración.
-            <br />
-            <code className="text-xs mt-2 block">{error}</code>
-          </AlertDescription>
-        </Alert>
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground mb-4">
-              Revisa la consola del navegador para más detalles
-            </p>
-            <Button onClick={() => window.location.reload()}>
-              Reintentar
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  // Función para vincular sensor
+  const handleLinkSensor = async (orchidId: string, sensorId: string) => {
+    try {
+      await editOrchid(orchidId, { sensorId: sensorId });
+      toast.success('Sensor vinculado correctamente');
+    } catch (error) {
+      toast.error('Error al vincular sensor');
+    }
+  };
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        {/* Diagnóstico siempre visible durante carga */}
-        <FirebaseDebug />
-        
-        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-          <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-          <p className="text-emerald-800">Cargando tus orquídeas...</p>
-          <p className="text-sm text-muted-foreground">Si tarda mucho, revisa el diagnóstico arriba ↑</p>
-        </div>
-
-        <Card>
-          <CardContent className="py-6 space-y-3">
-            <p className="text-center">
-              <strong>¿Sigue cargando?</strong>
-            </p>
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p>1. Revisa el panel de diagnóstico arriba</p>
-              <p>2. Abre la consola del navegador (F12)</p>
-              <p>3. Busca errores en rojo</p>
-              <p>4. Verifica que Firestore esté creado en Firebase Console</p>
-            </div>
-            <Button onClick={() => window.location.reload()} className="w-full">
-              Reintentar
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col items-center justify-center py-12 space-y-4">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+        <p className="text-emerald-800">Cargando tus orquídeas...</p>
       </div>
     );
   }
 
+  if (error) return <Alert variant="destructive"><AlertTitle>Error</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;
+
   const needsWatering = orchids.filter(o => o.nextWatering <= currentTime);
-  const lowHumidity = orchids.filter(o => o.humidity && o.humidity < 60);
-
-  const getHumidityStatus = (humidity?: number) => {
-    if (!humidity) return { status: 'N/A', variant: 'secondary' as const };
-    if (humidity < 50) return { status: 'Bajo', variant: 'destructive' as const };
-    if (humidity < 60) return { status: 'Medio', variant: 'default' as const };
-    return { status: 'Óptimo', variant: 'default' as const };
-  };
-
-  const getDaysUntilWatering = (nextWatering: Date) => {
-    const diff = nextWatering.getTime() - currentTime.getTime();
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    return days;
-  };
 
   return (
     <div className="space-y-6">
-      {/* Debug Panel */}
       <div className="flex justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowDebug(!showDebug)}
-        >
+        <Button variant="outline" size="sm" onClick={() => setShowDebug(!showDebug)}>
           {showDebug ? 'Ocultar' : 'Mostrar'} Diagnóstico
         </Button>
       </div>
 
       {showDebug && <FirebaseDebug />}
 
-      {/* Alerts */}
       {needsWatering.length > 0 && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>¡Atención! Orquídeas necesitan riego</AlertTitle>
-          <AlertDescription>
-            {needsWatering.map(o => o.name).join(', ')} necesitan ser regadas hoy.
-          </AlertDescription>
+          <AlertTitle>Riego Necesario</AlertTitle>
+          <AlertDescription>{needsWatering.length} orquídeas necesitan agua hoy.</AlertDescription>
         </Alert>
       )}
 
-      {lowHumidity.length > 0 && needsWatering.length === 0 && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Humedad baja detectada</AlertTitle>
-          <AlertDescription>
-            Algunas orquídeas tienen niveles de humedad por debajo del óptimo.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {needsWatering.length === 0 && lowHumidity.length === 0 && orchids.length > 0 && (
-        <Alert className="border-emerald-200 bg-emerald-50">
-          <CheckCircle className="h-4 w-4 text-emerald-600" />
-          <AlertTitle className="text-emerald-800">Todo en orden</AlertTitle>
-          <AlertDescription className="text-emerald-700">
-            Todas tus orquídeas están en condiciones óptimas.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Add Orchid Button */}
       <div className="flex justify-between items-center">
-        <h2 className="text-emerald-800">Mis Orquídeas</h2>
+        <h2 className="text-emerald-800 text-2xl font-bold">Mis Orquídeas</h2>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700">
               <Plus className="w-4 h-4 mr-2" />
               Agregar Orquídea
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Agregar Nueva Orquídea</DialogTitle>
-              <DialogDescription>
-                Registra una nueva orquídea en tu sistema de monitoreo
-              </DialogDescription>
+              <DialogTitle>Nueva Orquídea</DialogTitle>
+              <DialogDescription>Registra una nueva planta en tu colección.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddOrchid} className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Nombre *</Label>
-                <Input
-                  id="name"
-                  placeholder="Ej: Phalaenopsis Rosa"
-                  value={newOrchid.name}
-                  onChange={(e) => setNewOrchid({ ...newOrchid, name: e.target.value })}
-                  required
-                />
+                <Label htmlFor="name">Nombre</Label>
+                <Input id="name" value={newOrchid.name} onChange={(e) => setNewOrchid({ ...newOrchid, name: e.target.value })} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="species">Especie *</Label>
-                <Input
-                  id="species"
-                  placeholder="Ej: Phalaenopsis"
-                  value={newOrchid.species}
-                  onChange={(e) => setNewOrchid({ ...newOrchid, species: e.target.value })}
-                  required
-                />
+                <Label htmlFor="species">Especie</Label>
+                <Input id="species" value={newOrchid.species} onChange={(e) => setNewOrchid({ ...newOrchid, species: e.target.value })} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="location">Ubicación</Label>
-                <Input
-                  id="location"
-                  placeholder="Ej: Sala de estar"
-                  value={newOrchid.location}
-                  onChange={(e) => setNewOrchid({ ...newOrchid, location: e.target.value })}
-                />
+                <Label htmlFor="frequency">Frecuencia de Riego (días)</Label>
+                <Input type="number" id="frequency" value={newOrchid.wateringFrequency} onChange={(e) => setNewOrchid({ ...newOrchid, wateringFrequency: parseInt(e.target.value) })} required min={1} />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="frequency">Frecuencia de Riego</Label>
-                <Select
-                  value={newOrchid.wateringFrequency.toString()}
-                  onValueChange={(value) => setNewOrchid({ ...newOrchid, wateringFrequency: parseInt(value) })}
-                >
-                  <SelectTrigger id="frequency">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="3">Cada 3 días</SelectItem>
-                    <SelectItem value="5">Cada 5 días</SelectItem>
-                    <SelectItem value="7">Cada 7 días</SelectItem>
-                    <SelectItem value="10">Cada 10 días</SelectItem>
-                    <SelectItem value="14">Cada 14 días</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button type="submit" className="w-full" disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Agregando...
-                  </>
-                ) : (
-                  'Agregar Orquídea'
-                )}
+              <Button type="submit" className="w-full bg-emerald-600" disabled={isSubmitting}>
+                {isSubmitting ? <Loader2 className="animate-spin" /> : 'Guardar'}
               </Button>
             </form>
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* Orchid Cards */}
       {orchids.length === 0 ? (
         <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground mb-4">
-              No tienes orquídeas registradas aún
-            </p>
-            <Button onClick={() => setIsDialogOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Agregar Primera Orquídea
-            </Button>
-          </CardContent>
+          <CardContent className="py-12 text-center text-muted-foreground">No tienes orquídeas registradas.</CardContent>
         </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {orchids.map(orchid => {
-            const daysUntil = getDaysUntilWatering(orchid.nextWatering);
-            const humidityStatus = getHumidityStatus(orchid.humidity);
-
-            return (
-              <OrchidCard
-                key={orchid.id}
-                orchid={orchid}
-                daysUntil={daysUntil}
-                humidityStatus={humidityStatus}
-              />
-            );
-          })}
+          {orchids.map(orchid => (
+            <OrchidCard
+              key={orchid.id}
+              orchid={orchid}
+              sensors={availableSensors}
+              onLinkSensor={handleLinkSensor}
+            />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
+// --- COMPONENTE DE TARJETA MEJORADO ---
+
 interface OrchidCardProps {
   orchid: any;
-  daysUntil: number;
-  humidityStatus: { status: string; variant: any };
+  sensors: RealtimeSensorData[];
+  onLinkSensor: (orchidId: string, sensorId: string) => void;
 }
 
-function OrchidCard({ orchid, daysUntil, humidityStatus }: OrchidCardProps) {
+function OrchidCard({ orchid, sensors, onLinkSensor }: OrchidCardProps) {
   const { user } = useFirebaseAuth();
-  const { sensorData, loading } = useRealtimeSensor(user?.uid || null, orchid.id || null);
+  // Pasamos 'user' (objeto) correctamente
+  const { sensorData } = useRealtimeSensor(user, orchid.sensorId || null);
+  const [isLinkOpen, setIsLinkOpen] = useState(false);
 
-  // Use realtime sensor data if available, otherwise fall back to stored values
-  const currentHumidity = sensorData?.humidity ?? orchid.humidity ?? 0;
-  const currentTemp = sensorData?.temperature ?? orchid.temperature ?? 0;
-  const currentLight = sensorData?.light ?? orchid.light ?? 0;
+  // Verificar si hay un sensor vinculado
+  const isConnected = !!orchid.sensorId;
+
+  // Helper para formatear valores: Muestra "--" si no hay sensor o no hay dato
+  const formatValue = (val: number | undefined | null, unit: string) => {
+    if (!isConnected || val === null || val === undefined) return "--";
+    return `${val.toFixed(1)}${unit}`;
+  };
+
+  const formatInt = (val: number | undefined | null, unit: string) => {
+    if (!isConnected || val === null || val === undefined) return "--";
+    return `${val.toFixed(0)}${unit}`;
+  };
+
+  // Obtenemos los datos reales (si existen)
+  const humidity = sensorData?.humidity;
+  const temp = sensorData?.temperature;
+  const light = sensorData?.light;
+  const soil = sensorData?.soilMoisture;
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white">
-        <CardTitle>{orchid.name}</CardTitle>
-        <CardDescription className="text-emerald-50">
-          {daysUntil < 0
-            ? '¡Necesita riego ahora!'
-            : daysUntil === 0
-            ? 'Regar hoy'
-            : `Próximo riego en ${daysUntil} ${daysUntil === 1 ? 'día' : 'días'}`}
-        </CardDescription>
+    <Card className="overflow-hidden shadow-md hover:shadow-lg transition-shadow border-0">
+      <CardHeader className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white p-4">
+        <div className="flex justify-between items-start">
+          <div>
+            <CardTitle className="text-lg font-bold">{orchid.name}</CardTitle>
+            <CardDescription className="text-emerald-50 text-xs mt-1 flex items-center gap-1">
+              {orchid.species} 
+              {isConnected && <Badge variant="secondary" className="h-5 px-1.5 text-[10px] bg-emerald-400/30 text-white border-0">Sensor Activo</Badge>}
+            </CardDescription>
+          </div>
+          
+          {/* BOTÓN DE VINCULACIÓN */}
+          <Dialog open={isLinkOpen} onOpenChange={setIsLinkOpen}>
+            <DialogTrigger asChild>
+              <Button size="icon" variant="ghost" className="h-8 w-8 text-white hover:bg-white/20 rounded-full">
+                {orchid.sensorId ? <LinkIcon className="h-4 w-4" /> : <Unlink className="h-4 w-4 opacity-50" />}
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Vincular Sensor a {orchid.name}</DialogTitle>
+                <DialogDescription>Elige un sensor para ver sus datos en esta planta.</DialogDescription>
+              </DialogHeader>
+              <div className="py-4 space-y-4">
+                <div className="space-y-2">
+                  <Label>Sensor Disponible</Label>
+                  <Select 
+                    defaultValue={orchid.sensorId} 
+                    onValueChange={(value) => {
+                      onLinkSensor(orchid.id, value);
+                      setIsLinkOpen(false);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona un sensor..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sensors.length > 0 ? (
+                        sensors.map(s => (
+                          <SelectItem key={s.orchidId} value={s.orchidId}>
+                            {s.orchidId.replace(/_/g, ' ')} (T: {s.temperature?.toFixed(1)}°C)
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="p-2 text-sm text-muted-foreground text-center">No hay sensores conectados</div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {orchid.sensorId && (
+                  <Button 
+                    variant="destructive" 
+                    className="w-full" 
+                    onClick={() => {
+                      onLinkSensor(orchid.id, ""); // Desvincular
+                      setIsLinkOpen(false);
+                    }}
+                  >
+                    <Unlink className="mr-2 h-4 w-4" /> Desvincular Sensor Actual
+                  </Button>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
       </CardHeader>
-      <CardContent className="pt-6 space-y-4">
-        {loading && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            <span>Cargando datos del sensor...</span>
-          </div>
-        )}
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Droplets className="w-5 h-5 text-blue-500" />
-            <span className="text-muted-foreground">Humedad</span>
+      <CardContent className="p-4 space-y-4 bg-white">
+        {/* DATOS PRINCIPALES */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-blue-50 p-3 rounded-xl flex flex-col items-center justify-center">
+            <div className="flex items-center gap-1 mb-1">
+              <Droplets className="w-4 h-4 text-blue-500" />
+              <span className="text-xs font-bold text-muted-foreground uppercase">Humedad</span>
+            </div>
+            <span className="text-xl font-bold text-blue-700">{formatValue(humidity, "%")}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span>{currentHumidity.toFixed(1)}%</span>
-            <Badge variant={humidityStatus.variant}>{humidityStatus.status}</Badge>
+          <div className="bg-orange-50 p-3 rounded-xl flex flex-col items-center justify-center">
+            <div className="flex items-center gap-1 mb-1">
+              <Thermometer className="w-4 h-4 text-orange-500" />
+              <span className="text-xs font-bold text-muted-foreground uppercase">Temp</span>
+            </div>
+            <span className="text-xl font-bold text-orange-700">{formatValue(temp, "°C")}</span>
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Thermometer className="w-5 h-5 text-orange-500" />
-            <span className="text-muted-foreground">Temperatura</span>
+        {/* DATOS SECUNDARIOS */}
+        <div className="grid grid-cols-2 gap-2 pt-2 border-t text-sm">
+          <div className="flex items-center justify-between text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Wind className="w-4 h-4 text-purple-500" />
+              <span>Luz</span>
+            </div>
+            <span className="font-medium">{formatInt(light, "%")}</span>
           </div>
-          <span>{currentTemp.toFixed(1)}°C</span>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Wind className="w-5 h-5 text-purple-500" />
-            <span className="text-muted-foreground">Luz</span>
+          <div className="flex items-center justify-between text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Droplets className="w-4 h-4 text-brown-500" /> 
+              <span>Suelo</span>
+            </div>
+            <span className="font-medium">{formatInt(soil, "%")}</span>
           </div>
-          <span>{currentLight.toFixed(0)}%</span>
-        </div>
-
-        <div className="pt-2 border-t text-muted-foreground">
-          <p className="text-sm">{orchid.species}</p>
-          <p className="text-sm">
-            Último riego: {orchid.lastWatered.toLocaleDateString('es-ES', {
-              day: 'numeric',
-              month: 'short',
-            })}
-          </p>
         </div>
       </CardContent>
     </Card>

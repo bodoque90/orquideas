@@ -1,91 +1,96 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar } from './ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Button } from './ui/button';
-import { CalendarIcon, Download } from 'lucide-react';
-import { Badge } from './ui/badge';
+import { Download, WifiOff, Loader2, Sprout } from 'lucide-react';
+import {
+  AreaChart, Area, LineChart, Line, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts';
+import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
+import { subscribeToAllUserSensors, subscribeToSensorHistory, RealtimeSensorData, HistoryDataPoint } from '../lib/firebase/realtime';
 
-interface HistoricalDataProps {
-  recordingFrequency: number;
-}
+export function HistoricalData() {
+  const { user } = useFirebaseAuth();
+  
+  const [sensors, setSensors] = useState<RealtimeSensorData[]>([]);
+  const [selectedSensorId, setSelectedSensorId] = useState<string>('');
+  const [rawData, setRawData] = useState<HistoryDataPoint[]>([]);
+  const [filteredData, setFilteredData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [timeRange, setTimeRange] = useState('all'); 
 
-interface DataPoint {
-  timestamp: string;
-  humidity: number;
-  temperature: number;
-  time: string;
-}
-
-export function HistoricalData({ recordingFrequency }: HistoricalDataProps) {
-  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | 'custom'>('24h');
-  const [selectedSensor, setSelectedSensor] = useState('all');
-  const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
-    from: undefined,
-    to: undefined,
-  });
-  const [historicalData, setHistoricalData] = useState<DataPoint[]>([]);
-
+  // 1. Cargar Sensores
   useEffect(() => {
-    generateHistoricalData();
-  }, [timeRange, recordingFrequency]);
+    if (!user) return;
+    const unsubscribe = subscribeToAllUserSensors(user.uid, (data) => {
+      setSensors(data);
+      if (data.length > 0 && !selectedSensorId) {
+        setSelectedSensorId(data[0].orchidId);
+      }
+    });
+    return () => unsubscribe();
+  }, [user]);
 
-  const generateHistoricalData = () => {
-    const data: DataPoint[] = [];
-    const now = new Date();
-    let dataPoints = 24;
-    let intervalMinutes = 60;
+  // 2. Cargar Historial
+  useEffect(() => {
+    if (!user || !selectedSensorId) return;
+    setLoading(true);
+    
+    const unsubscribe = subscribeToSensorHistory(user.uid, selectedSensorId, (data) => {
+      setRawData(data);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user, selectedSensorId]);
 
-    switch (timeRange) {
-      case '24h':
-        dataPoints = 24;
-        intervalMinutes = 60;
-        break;
-      case '7d':
-        dataPoints = 168;
-        intervalMinutes = 60;
-        break;
-      case '30d':
-        dataPoints = 720;
-        intervalMinutes = 60;
-        break;
-      default:
-        dataPoints = 24;
-        intervalMinutes = recordingFrequency;
+  // 3. Filtrar Datos
+  useEffect(() => {
+    if (!rawData || rawData.length === 0) {
+      setFilteredData([]);
+      return;
     }
 
-    for (let i = dataPoints; i >= 0; i--) {
-      const timestamp = new Date(now.getTime() - i * intervalMinutes * 60 * 1000);
-      const hour = timestamp.getHours();
-      
-      // Simulate natural variations
-      const baseHumidity = 60 + Math.sin(i / 10) * 10;
-      const baseTemp = 22 + Math.sin(i / 8) * 3 + (hour > 12 && hour < 18 ? 2 : 0);
-      
-      data.push({
-        timestamp: timestamp.toISOString(),
-        humidity: Math.max(40, Math.min(80, baseHumidity + (Math.random() - 0.5) * 5)),
-        temperature: Math.max(18, Math.min(28, baseTemp + (Math.random() - 0.5) * 2)),
-        time: timestamp.toLocaleTimeString('es-ES', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          ...(timeRange !== '24h' && { month: 'short', day: 'numeric' })
-        }),
-      });
-    }
+    const now = Date.now();
+    let cutoffTime = 0;
 
-    setHistoricalData(data);
-  };
+    if (timeRange === '1h') cutoffTime = now - 60 * 60 * 1000;
+    if (timeRange === '24h') cutoffTime = now - 24 * 60 * 60 * 1000;
+    if (timeRange === '7d') cutoffTime = now - 7 * 24 * 60 * 60 * 1000;
+    if (timeRange === '30d') cutoffTime = now - 30 * 24 * 60 * 60 * 1000;
 
-  const exportData = () => {
+    const filtered = rawData
+      .map(d => {
+        // PARCHE: Si el timestamp no es número (es "sv" o null), lo descartamos marcándolo como 0
+        const validTs = typeof d.timestamp === 'number' ? d.timestamp : 0;
+        return { ...d, timestamp: validTs };
+      })
+      .filter(d => {
+        // Ignorar datos inválidos (0) y aplicar filtro de tiempo
+        if (d.timestamp === 0) return false;
+        if (timeRange === 'all') return true;
+        return d.timestamp >= cutoffTime;
+      })
+      .map(d => ({
+        ...d,
+        displayTime: new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        fullDate: new Date(d.timestamp).toLocaleString()
+      }));
+
+    setFilteredData(filtered);
+  }, [rawData, timeRange]);
+
+  const handleDownload = () => {
+    if (filteredData.length === 0) return;
     const csv = [
-      ['Fecha/Hora', 'Humedad (%)', 'Temperatura (°C)'].join(','),
-      ...historicalData.map(d => [
-        new Date(d.timestamp).toLocaleString('es-ES'),
-        d.humidity.toFixed(2),
-        d.temperature.toFixed(2),
+      ['Fecha', 'Hora', 'Humedad (%)', 'Temperatura (°C)', 'Luz', 'Suelo'].join(','),
+      ...filteredData.map(d => [
+        new Date(d.timestamp).toLocaleDateString(),
+        new Date(d.timestamp).toLocaleTimeString(),
+        d.humidity,
+        d.temperature,
+        d.light,
+        d.soilMoisture
       ].join(','))
     ].join('\n');
 
@@ -93,229 +98,124 @@ export function HistoricalData({ recordingFrequency }: HistoricalDataProps) {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `datos-orquideas-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `reporte-${selectedSensorId}.csv`;
     a.click();
-  };
-
-  const stats = {
-    avgHumidity: historicalData.reduce((acc, d) => acc + d.humidity, 0) / historicalData.length,
-    avgTemp: historicalData.reduce((acc, d) => acc + d.temperature, 0) / historicalData.length,
-    minHumidity: Math.min(...historicalData.map(d => d.humidity)),
-    maxHumidity: Math.max(...historicalData.map(d => d.humidity)),
-    minTemp: Math.min(...historicalData.map(d => d.temperature)),
-    maxTemp: Math.max(...historicalData.map(d => d.temperature)),
   };
 
   return (
     <div className="space-y-6">
+      {/* BARRA DE CONTROLES */}
       <div className="flex flex-wrap gap-4 items-center justify-between">
-        <div className="flex flex-wrap gap-4 items-center">
-          <Select value={timeRange} onValueChange={(value: any) => setTimeRange(value)}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border shadow-sm">
+            <Sprout className="w-4 h-4 text-emerald-600" />
+            <Select value={selectedSensorId} onValueChange={setSelectedSensorId}>
+              <SelectTrigger className="w-[200px] border-0 h-8 focus:ring-0 p-0 bg-transparent">
+                <SelectValue placeholder="Seleccionar sensor" />
+              </SelectTrigger>
+              <SelectContent>
+                {sensors.map(s => (
+                  <SelectItem key={s.orchidId} value={s.orchidId}>
+                    {s.orchidId.replace(/_/g, ' ')}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Select value={timeRange} onValueChange={setTimeRange}>
+            <SelectTrigger className="w-[160px] bg-white">
+              <SelectValue placeholder="Periodo" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">Todo el historial</SelectItem>
+              <SelectItem value="1h">Última hora</SelectItem>
               <SelectItem value="24h">Últimas 24 horas</SelectItem>
               <SelectItem value="7d">Últimos 7 días</SelectItem>
-              <SelectItem value="30d">Últimos 30 días</SelectItem>
-              <SelectItem value="custom">Personalizado</SelectItem>
             </SelectContent>
           </Select>
-
-          <Select value={selectedSensor} onValueChange={setSelectedSensor}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los sensores</SelectItem>
-              <SelectItem value="1">Sensor Invernadero</SelectItem>
-              <SelectItem value="2">Sensor Terraza</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {timeRange === 'custom' && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  Seleccionar fechas
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.from}
-                  onSelect={(date) => setDateRange({ ...dateRange, from: date })}
-                />
-              </PopoverContent>
-            </Popover>
-          )}
+          
+          {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
         </div>
 
-        <Button onClick={exportData} variant="outline">
+        <Button variant="outline" size="sm" onClick={handleDownload} disabled={filteredData.length === 0}>
           <Download className="w-4 h-4 mr-2" />
-          Exportar CSV
+          Descargar
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardDescription>Humedad Promedio</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-blue-600">{stats.avgHumidity.toFixed(1)}%</div>
-            <p className="text-muted-foreground">
-              Rango: {stats.minHumidity.toFixed(1)}% - {stats.maxHumidity.toFixed(1)}%
+      {/* ESTADO SIN DATOS */}
+      {filteredData.length === 0 && !loading ? (
+        <Card className="border-dashed bg-slate-50/50">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+            <div className="rounded-full bg-slate-100 p-3 mb-4">
+              <WifiOff className="h-6 w-6 text-slate-400" />
+            </div>
+            <p className="text-lg font-medium text-slate-900">Sin datos históricos</p>
+            <p className="text-sm text-slate-500 max-w-xs mt-2">
+              No se encontraron registros válidos. Espera a que el sensor guarde nuevos datos.
             </p>
           </CardContent>
         </Card>
+      ) : (
+        <>
+          {/* GRÁFICO HUMEDAD */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Humedad Relativa</CardTitle>
+              <CardDescription>Evolución en el tiempo</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div style={{ width: '100%', height: 300 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={filteredData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorHumidity" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="displayTime" tick={{ fontSize: 12 }} tickMargin={10} />
+                    <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 12 }} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="humidity" stroke="#3b82f6" fillOpacity={1} fill="url(#colorHumidity)" name="Humedad" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardDescription>Temperatura Promedio</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-orange-600">{stats.avgTemp.toFixed(1)}°C</div>
-            <p className="text-muted-foreground">
-              Rango: {stats.minTemp.toFixed(1)}°C - {stats.maxTemp.toFixed(1)}°C
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardDescription>Frecuencia de Registro</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-emerald-600">Cada {recordingFrequency} min</div>
-            <p className="text-muted-foreground">
-              {historicalData.length} registros
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardDescription>Estado General</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Badge className="bg-green-500">
-              Óptimo
-            </Badge>
-            <p className="text-muted-foreground mt-2">
-              Condiciones ideales
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Gráfica de Humedad</CardTitle>
-          <CardDescription>Seguimiento del nivel de humedad en el tiempo</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={historicalData}>
-              <defs>
-                <linearGradient id="colorHumidity" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis 
-                dataKey="time" 
-                tick={{ fontSize: 12 }}
-                interval={Math.floor(historicalData.length / 8)}
-              />
-              <YAxis domain={[40, 80]} />
-              <Tooltip />
-              <Legend />
-              <Area
-                type="monotone"
-                dataKey="humidity"
-                stroke="#3b82f6"
-                fillOpacity={1}
-                fill="url(#colorHumidity)"
-                name="Humedad (%)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Gráfica de Temperatura</CardTitle>
-          <CardDescription>Seguimiento de la temperatura ambiental</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={historicalData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis 
-                dataKey="time" 
-                tick={{ fontSize: 12 }}
-                interval={Math.floor(historicalData.length / 8)}
-              />
-              <YAxis domain={[18, 28]} />
-              <Tooltip />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="temperature"
-                stroke="#f97316"
-                strokeWidth={2}
-                dot={false}
-                name="Temperatura (°C)"
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Comparativa</CardTitle>
-          <CardDescription>Humedad y temperatura en el mismo período</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={historicalData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis 
-                dataKey="time" 
-                tick={{ fontSize: 12 }}
-                interval={Math.floor(historicalData.length / 8)}
-              />
-              <YAxis yAxisId="left" domain={[40, 80]} />
-              <YAxis yAxisId="right" orientation="right" domain={[18, 28]} />
-              <Tooltip />
-              <Legend />
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="humidity"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                dot={false}
-                name="Humedad (%)"
-              />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="temperature"
-                stroke="#f97316"
-                strokeWidth={2}
-                dot={false}
-                name="Temperatura (°C)"
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+          {/* GRÁFICO TEMPERATURA */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Temperatura</CardTitle>
+              <CardDescription>Variación térmica</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div style={{ width: '100%', height: 300 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={filteredData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                    <XAxis dataKey="displayTime" tick={{ fontSize: 12 }} tickMargin={10} />
+                    <YAxis domain={['auto', 'auto']} unit="°C" tick={{ fontSize: 12 }} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <Tooltip />
+                    <Line 
+                      type="monotone" 
+                      dataKey="temperature" 
+                      stroke="#f97316" 
+                      strokeWidth={3} 
+                      dot={{ r: 4, fill: "#f97316", strokeWidth: 2, stroke: "#fff" }} 
+                      activeDot={{ r: 6 }} 
+                      name="Temperatura" 
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

@@ -1,33 +1,66 @@
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
-import { Bell, Database, Wifi, Save } from 'lucide-react';
-import { useState } from 'react';
+import { Bell, Database, Wifi, Save, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from './ui/sonner';
+import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
+import { updateSystemSettings, subscribeToSystemSettings } from '../lib/firebase/realtime';
 
-interface SettingsProps {
-  recordingFrequency: number;
-  setRecordingFrequency: (value: number) => void;
-}
+export function Settings() {
+  const { user } = useFirebaseAuth();
+  
+  // --- ESTADO FUNCIONAL (Conectado a Firebase) ---
+  const [frequency, setFrequency] = useState("60"); // String para el Select
+  const [loading, setLoading] = useState(false);
 
-export function Settings({ recordingFrequency, setRecordingFrequency }: SettingsProps) {
+  // --- ESTADOS VISUALES (Del diseño original) ---
   const [notifications, setNotifications] = useState(true);
   const [autoWatering, setAutoWatering] = useState(false);
   const [temperatureUnit, setTemperatureUnit] = useState('celsius');
   const [dataRetention, setDataRetention] = useState('90');
 
-  const handleSave = () => {
-    toast.success('Configuración guardada correctamente');
+  // 1. Cargar configuración real al iniciar
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = subscribeToSystemSettings(user.uid, (settings) => {
+      if (settings?.recordingFrequency) {
+        setFrequency(settings.recordingFrequency.toString());
+      }
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // 2. Guardar Frecuencia (Funcionalidad Real)
+  const handleSaveFrequency = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      await updateSystemSettings(user.uid, {
+        recordingFrequency: parseInt(frequency)
+      });
+      toast.success('Frecuencia actualizada y enviada al sensor');
+    } catch (error) {
+      toast.error('Error al guardar frecuencia');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. Guardar General (Visual)
+  const handleSaveGeneral = () => {
+    toast.success('Configuración visual guardada (Simulación)');
   };
 
   return (
     <div className="space-y-6">
       <Toaster />
       
+      {/* --- SECCIÓN 1: FRECUENCIA (FUNCIONAL) --- */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -35,35 +68,42 @@ export function Settings({ recordingFrequency, setRecordingFrequency }: Settings
             <CardTitle>Configuración de Registro de Datos</CardTitle>
           </div>
           <CardDescription>
-            Configura la frecuencia de registro de las condiciones ambientales
+            Configura cada cuánto tiempo el sensor guarda un registro en el historial
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="frequency">Frecuencia de Registro</Label>
-            <Select 
-              value={recordingFrequency.toString()} 
-              onValueChange={(value) => setRecordingFrequency(parseInt(value))}
-            >
-              <SelectTrigger id="frequency">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="15">Cada 15 minutos</SelectItem>
-                <SelectItem value="30">Cada 30 minutos</SelectItem>
-                <SelectItem value="60">Cada 1 hora</SelectItem>
-                <SelectItem value="120">Cada 2 horas</SelectItem>
-                <SelectItem value="180">Cada 3 horas</SelectItem>
-                <SelectItem value="360">Cada 6 horas</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-muted-foreground">
-              Los datos se registrarán automáticamente cada {recordingFrequency} minutos
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <Select 
+                  value={frequency} 
+                  onValueChange={setFrequency}
+                >
+                  <SelectTrigger id="frequency">
+                    <SelectValue placeholder="Selecciona frecuencia" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Modo Prueba (1 min)</SelectItem>
+                    <SelectItem value="15">Cada 15 minutos</SelectItem>
+                    <SelectItem value="30">Cada 30 minutos</SelectItem>
+                    <SelectItem value="60">Cada 1 hora</SelectItem>
+                    <SelectItem value="120">Cada 2 horas</SelectItem>
+                    <SelectItem value="360">Cada 6 horas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={handleSaveFrequency} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Aplicar'}
+              </Button>
+            </div>
+            <p className="text-muted-foreground text-sm">
+              El sensor actualizará su temporizador automáticamente a {frequency} minutos.
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="retention">Retención de Datos</Label>
+            <Label htmlFor="retention">Retención de Datos (Visual)</Label>
             <Select value={dataRetention} onValueChange={setDataRetention}>
               <SelectTrigger id="retention">
                 <SelectValue />
@@ -76,13 +116,14 @@ export function Settings({ recordingFrequency, setRecordingFrequency }: Settings
                 <SelectItem value="-1">Ilimitado</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-muted-foreground">
-              Los datos más antiguos se eliminarán automáticamente
+            <p className="text-muted-foreground text-xs">
+              Los datos más antiguos se eliminarán automáticamente (Próximamente)
             </p>
           </div>
         </CardContent>
       </Card>
 
+      {/* --- SECCIÓN 2: NOTIFICACIONES (VISUAL) --- */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -149,6 +190,7 @@ export function Settings({ recordingFrequency, setRecordingFrequency }: Settings
         </CardContent>
       </Card>
 
+      {/* --- SECCIÓN 3: SENSORES (VISUAL) --- */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -199,6 +241,7 @@ export function Settings({ recordingFrequency, setRecordingFrequency }: Settings
         </CardContent>
       </Card>
 
+      {/* --- SECCIÓN 4: PREFERENCIAS (VISUAL) --- */}
       <Card>
         <CardHeader>
           <CardTitle>Preferencias Generales</CardTitle>
@@ -248,9 +291,9 @@ export function Settings({ recordingFrequency, setRecordingFrequency }: Settings
         <Button variant="outline">
           Restaurar Valores por Defecto
         </Button>
-        <Button onClick={handleSave}>
+        <Button onClick={handleSaveGeneral}>
           <Save className="w-4 h-4 mr-2" />
-          Guardar Configuración
+          Guardar Configuración Global
         </Button>
       </div>
     </div>

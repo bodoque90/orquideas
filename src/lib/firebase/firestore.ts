@@ -12,17 +12,16 @@ import {
   limit,
   Timestamp,
   onSnapshot,
-  DocumentData,
-  QuerySnapshot,
 } from 'firebase/firestore';
 import { db } from './config';
 
-// Tipos de datos
+// --- TIPOS DE DATOS ACTUALIZADOS ---
 export interface Orchid {
   id?: string;
   name: string;
   species: string;
   location: string;
+  sensorId?: string; // <--- ¡ESTO ES LO QUE FALTABA!
   wateringFrequency: number; // días
   lastWatered: Date;
   nextWatering: Date;
@@ -39,17 +38,6 @@ export interface WateringRecord {
   orchidName: string;
   date: Date;
   notes?: string;
-  userId: string;
-}
-
-export interface SensorReading {
-  id?: string;
-  orchidId: string;
-  timestamp: Date;
-  humidity: number;
-  temperature: number;
-  light: number;
-  soilMoisture: number;
   userId: string;
 }
 
@@ -93,34 +81,11 @@ export async function getOrchids(userId: string): Promise<Orchid[]> {
   }
 }
 
-export async function getOrchidById(orchidId: string): Promise<Orchid | null> {
-  try {
-    const orchidRef = doc(db, 'orchids', orchidId);
-    const orchidSnap = await getDoc(orchidRef);
-    
-    if (orchidSnap.exists()) {
-      const data = orchidSnap.data();
-      return {
-        id: orchidSnap.id,
-        ...data,
-        lastWatered: data.lastWatered?.toDate(),
-        nextWatering: data.nextWatering?.toDate(),
-        createdAt: data.createdAt?.toDate(),
-      } as Orchid;
-    }
-    return null;
-  } catch (error) {
-    console.error('Error getting orchid:', error);
-    throw error;
-  }
-}
-
 export async function updateOrchid(orchidId: string, updates: Partial<Orchid>) {
   try {
     const orchidRef = doc(db, 'orchids', orchidId);
     const updateData: any = { ...updates };
     
-    // Convertir fechas a Timestamp
     if (updates.lastWatered) {
       updateData.lastWatered = Timestamp.fromDate(updates.lastWatered);
     }
@@ -186,62 +151,6 @@ export async function getWateringRecords(userId: string, orchidId?: string): Pro
   }
 }
 
-// ===== LECTURAS DE SENSORES =====
-
-export async function createSensorReading(reading: Omit<SensorReading, 'id'>) {
-  try {
-    const readingsRef = collection(db, 'sensorReadings');
-    const docRef = await addDoc(readingsRef, {
-      ...reading,
-      timestamp: Timestamp.fromDate(reading.timestamp),
-    });
-    return { id: docRef.id, ...reading };
-  } catch (error) {
-    console.error('Error creating sensor reading:', error);
-    throw error;
-  }
-}
-
-export async function getSensorReadings(
-  userId: string,
-  orchidId?: string,
-  limitCount: number = 100
-): Promise<SensorReading[]> {
-  try {
-    const readingsRef = collection(db, 'sensorReadings');
-    let q = query(
-      readingsRef,
-      where('userId', '==', userId),
-      orderBy('timestamp', 'desc'),
-      limit(limitCount)
-    );
-    
-    if (orchidId) {
-      q = query(
-        readingsRef,
-        where('userId', '==', userId),
-        where('orchidId', '==', orchidId),
-        orderBy('timestamp', 'desc'),
-        limit(limitCount)
-      );
-    }
-    
-    const querySnapshot = await getDocs(q);
-    
-    return querySnapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        timestamp: data.timestamp?.toDate(),
-      } as SensorReading;
-    });
-  } catch (error) {
-    console.error('Error getting sensor readings:', error);
-    throw error;
-  }
-}
-
 // ===== SUSCRIPCIONES EN TIEMPO REAL =====
 
 export function subscribeToOrchids(
@@ -263,32 +172,5 @@ export function subscribeToOrchids(
       } as Orchid;
     });
     callback(orchids);
-  });
-}
-
-export function subscribeToSensorReadings(
-  userId: string,
-  orchidId: string,
-  callback: (readings: SensorReading[]) => void
-) {
-  const readingsRef = collection(db, 'sensorReadings');
-  const q = query(
-    readingsRef,
-    where('userId', '==', userId),
-    where('orchidId', '==', orchidId),
-    orderBy('timestamp', 'desc'),
-    limit(50)
-  );
-  
-  return onSnapshot(q, (snapshot) => {
-    const readings = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        timestamp: data.timestamp?.toDate(),
-      } as SensorReading;
-    });
-    callback(readings);
   });
 }
