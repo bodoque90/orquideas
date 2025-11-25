@@ -9,58 +9,76 @@ import { Bell, Database, Wifi, Save, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from './ui/sonner';
 import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
-import { updateSystemSettings, subscribeToSystemSettings } from '../lib/firebase/realtime';
+// Asegúrate de que SystemSettings esté exportado en realtime.ts
+import { updateSystemSettings, subscribeToSystemSettings, SystemSettings } from '../lib/firebase/realtime';
 
 export function Settings() {
   const { user } = useFirebaseAuth();
-  
-  // --- ESTADO FUNCIONAL (Conectado a Firebase) ---
-  const [frequency, setFrequency] = useState("60"); // String para el Select
   const [loading, setLoading] = useState(false);
 
-  // --- ESTADOS VISUALES (Del diseño original) ---
-  const [notifications, setNotifications] = useState(true);
-  const [autoWatering, setAutoWatering] = useState(false);
-  const [temperatureUnit, setTemperatureUnit] = useState('celsius');
-  const [dataRetention, setDataRetention] = useState('90');
+  // Estado inicial unificado (Todo esto se guardará en Firebase)
+  const [settings, setSettings] = useState<SystemSettings>({
+    recordingFrequency: 60,
+    pushNotifications: true,
+    lowHumidityAlert: true,
+    highTempAlert: true,
+    wateringReminder: true,
+    reminderTime: "08:00",
+    autoReconnect: true,
+    humidityCalibration: 0,
+    tempCalibration: 0,
+    tempUnit: 'celsius',
+    autoWatering: false,
+    darkMode: false,
+    dataRetention: "90"
+  });
 
-  // 1. Cargar configuración real al iniciar
+  // 1. Cargar configuración real desde Firebase al entrar
   useEffect(() => {
     if (!user) return;
-    const unsubscribe = subscribeToSystemSettings(user.uid, (settings) => {
-      if (settings?.recordingFrequency) {
-        setFrequency(settings.recordingFrequency.toString());
+    const unsubscribe = subscribeToSystemSettings(user.uid, (data) => {
+      if (data) {
+        // Fusionamos los datos de Firebase con el estado local
+        setSettings(prev => ({ ...prev, ...data }));
       }
     });
     return () => unsubscribe();
   }, [user]);
 
-  // 2. Guardar Frecuencia (Funcionalidad Real)
-  const handleSaveFrequency = async () => {
+  // 2. Función mágica: Guarda un cambio INMEDIATAMENTE al tocar un switch
+  const updateSetting = async (key: keyof SystemSettings, value: any) => {
     if (!user) return;
-    setLoading(true);
+    
+    // Actualización visual rápida (Optimistic UI)
+    setSettings(prev => ({ ...prev, [key]: value }));
+
     try {
-      await updateSystemSettings(user.uid, {
-        recordingFrequency: parseInt(frequency)
-      });
-      toast.success('Frecuencia actualizada y enviada al sensor');
+      // Guardado real en Firebase
+      await updateSystemSettings(user.uid, { [key]: value });
     } catch (error) {
-      toast.error('Error al guardar frecuencia');
-    } finally {
-      setLoading(false);
+      toast.error('Error al guardar cambio');
     }
   };
 
-  // 3. Guardar General (Visual)
-  const handleSaveGeneral = () => {
-    toast.success('Configuración visual guardada (Simulación)');
+  // 3. Función para guardar todo manualmente (Botón "Guardar Todo")
+  const handleManualSave = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      await updateSystemSettings(user.uid, settings);
+      toast.success('Configuración guardada correctamente');
+    } catch (error) {
+      toast.error('Error al guardar configuración');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <Toaster />
       
-      {/* --- SECCIÓN 1: FRECUENCIA (FUNCIONAL) --- */}
+      {/* --- REGISTRO DE DATOS --- */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -76,9 +94,10 @@ export function Settings() {
             <Label htmlFor="frequency">Frecuencia de Registro</Label>
             <div className="flex gap-4">
               <div className="flex-1">
+                {/* Usamos settings.recordingFrequency conectado a Firebase */}
                 <Select 
-                  value={frequency} 
-                  onValueChange={setFrequency}
+                  value={settings.recordingFrequency.toString()} 
+                  onValueChange={(val) => updateSetting('recordingFrequency', parseInt(val))}
                 >
                   <SelectTrigger id="frequency">
                     <SelectValue placeholder="Selecciona frecuencia" />
@@ -93,18 +112,18 @@ export function Settings() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={handleSaveFrequency} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Aplicar'}
-              </Button>
             </div>
             <p className="text-muted-foreground text-sm">
-              El sensor actualizará su temporizador automáticamente a {frequency} minutos.
+              El sensor actualizará su temporizador automáticamente.
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="retention">Retención de Datos (Visual)</Label>
-            <Select value={dataRetention} onValueChange={setDataRetention}>
+            <Label htmlFor="retention">Retención de Datos</Label>
+            <Select 
+              value={settings.dataRetention} 
+              onValueChange={(val) => updateSetting('dataRetention', val)}
+            >
               <SelectTrigger id="retention">
                 <SelectValue />
               </SelectTrigger>
@@ -116,67 +135,66 @@ export function Settings() {
                 <SelectItem value="-1">Ilimitado</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-muted-foreground text-xs">
-              Los datos más antiguos se eliminarán automáticamente (Próximamente)
-            </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* --- SECCIÓN 2: NOTIFICACIONES (VISUAL) --- */}
+      {/* --- NOTIFICACIONES Y ALERTAS --- */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
             <Bell className="w-5 h-5 text-emerald-600" />
             <CardTitle>Notificaciones y Alertas</CardTitle>
           </div>
-          <CardDescription>
-            Configura cuándo y cómo recibir notificaciones
-          </CardDescription>
+          <CardDescription>Configura qué avisos quieres ver en el Dashboard</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <Label htmlFor="notifications">Notificaciones Push</Label>
-              <p className="text-muted-foreground">
-                Recibe alertas de riego y condiciones ambientales
-              </p>
+              <Label htmlFor="notifications">Notificaciones Globales</Label>
+              <p className="text-muted-foreground text-sm">Activar/desactivar todas las alertas</p>
             </div>
             <Switch
               id="notifications"
-              checked={notifications}
-              onCheckedChange={setNotifications}
+              checked={settings.pushNotifications}
+              onCheckedChange={(val) => updateSetting('pushNotifications', val)}
             />
           </div>
 
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="low-humidity">Alerta de Humedad Baja</Label>
-              <p className="text-muted-foreground">
-                Notificar cuando la humedad esté por debajo del 50%
-              </p>
+              <p className="text-muted-foreground text-sm">Avisar si baja del 50%</p>
             </div>
-            <Switch id="low-humidity" defaultChecked />
+            <Switch 
+              id="low-humidity" 
+              checked={settings.lowHumidityAlert}
+              onCheckedChange={(val) => updateSetting('lowHumidityAlert', val)}
+            />
           </div>
 
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="high-temp">Alerta de Temperatura Alta</Label>
-              <p className="text-muted-foreground">
-                Notificar cuando la temperatura supere los 26°C
-              </p>
+              <p className="text-muted-foreground text-sm">Avisar si supera los 26°C</p>
             </div>
-            <Switch id="high-temp" defaultChecked />
+            <Switch 
+              id="high-temp" 
+              checked={settings.highTempAlert}
+              onCheckedChange={(val) => updateSetting('highTempAlert', val)}
+            />
           </div>
 
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="watering-reminder">Recordatorio de Riego</Label>
-              <p className="text-muted-foreground">
-                Recibir recordatorios según el calendario de riego
-              </p>
+              <p className="text-muted-foreground text-sm">Recordatorios según calendario</p>
             </div>
-            <Switch id="watering-reminder" defaultChecked />
+            <Switch 
+              id="watering-reminder" 
+              checked={settings.wateringReminder}
+              onCheckedChange={(val) => updateSetting('wateringReminder', val)}
+            />
           </div>
 
           <div className="space-y-2">
@@ -184,32 +202,34 @@ export function Settings() {
             <Input
               id="reminder-time"
               type="time"
-              defaultValue="08:00"
+              value={settings.reminderTime}
+              onChange={(e) => setSettings({...settings, reminderTime: e.target.value})}
+              onBlur={() => updateSetting('reminderTime', settings.reminderTime)}
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* --- SECCIÓN 3: SENSORES (VISUAL) --- */}
+      {/* --- SENSORES --- */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
             <Wifi className="w-5 h-5 text-emerald-600" />
             <CardTitle>Configuración de Sensores</CardTitle>
           </div>
-          <CardDescription>
-            Ajustes de conectividad y calibración
-          </CardDescription>
+          <CardDescription>Ajustes de conectividad y calibración</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="auto-reconnect">Reconexión Automática</Label>
-              <p className="text-muted-foreground">
-                Intentar reconectar sensores automáticamente
-              </p>
+              <p className="text-muted-foreground text-sm">Reintentar conexión si falla</p>
             </div>
-            <Switch id="auto-reconnect" defaultChecked />
+            <Switch 
+              id="auto-reconnect" 
+              checked={settings.autoReconnect}
+              onCheckedChange={(val) => updateSetting('autoReconnect', val)}
+            />
           </div>
 
           <div className="space-y-2">
@@ -217,12 +237,9 @@ export function Settings() {
             <Input
               id="calibration"
               type="number"
-              placeholder="0"
-              defaultValue="0"
+              value={settings.humidityCalibration}
+              onChange={(e) => setSettings({...settings, humidityCalibration: parseInt(e.target.value) || 0})}
             />
-            <p className="text-muted-foreground">
-              Ajuste de calibración para todos los sensores (±20%)
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -230,18 +247,19 @@ export function Settings() {
             <Input
               id="temp-calibration"
               type="number"
-              placeholder="0"
-              defaultValue="0"
               step="0.1"
+              value={settings.tempCalibration}
+              onChange={(e) => setSettings({...settings, tempCalibration: parseFloat(e.target.value) || 0})}
             />
-            <p className="text-muted-foreground">
-              Ajuste de calibración de temperatura (±5°C)
-            </p>
+          </div>
+          
+          <div className="flex justify-end">
+             <Button size="sm" variant="outline" onClick={handleManualSave}>Guardar Calibración</Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* --- SECCIÓN 4: PREFERENCIAS (VISUAL) --- */}
+      {/* --- PREFERENCIAS GENERALES --- */}
       <Card>
         <CardHeader>
           <CardTitle>Preferencias Generales</CardTitle>
@@ -249,7 +267,10 @@ export function Settings() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="temp-unit">Unidad de Temperatura</Label>
-            <Select value={temperatureUnit} onValueChange={setTemperatureUnit}>
+            <Select 
+              value={settings.tempUnit} 
+              onValueChange={(val) => updateSetting('tempUnit', val)}
+            >
               <SelectTrigger id="temp-unit">
                 <SelectValue />
               </SelectTrigger>
@@ -263,37 +284,22 @@ export function Settings() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="auto-watering">Modo Riego Automático (Próximamente)</Label>
-              <p className="text-muted-foreground">
-                Sistema de riego automático basado en sensores
-              </p>
+              <p className="text-muted-foreground text-sm">Sistema de riego automático</p>
             </div>
             <Switch
               id="auto-watering"
-              checked={autoWatering}
-              onCheckedChange={setAutoWatering}
+              checked={settings.autoWatering}
+              onCheckedChange={(val) => updateSetting('autoWatering', val)}
               disabled
             />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="dark-mode">Modo Oscuro</Label>
-              <p className="text-muted-foreground">
-                Cambiar al tema oscuro
-              </p>
-            </div>
-            <Switch id="dark-mode" />
           </div>
         </CardContent>
       </Card>
 
       <div className="flex justify-end gap-4">
-        <Button variant="outline">
-          Restaurar Valores por Defecto
-        </Button>
-        <Button onClick={handleSaveGeneral}>
-          <Save className="w-4 h-4 mr-2" />
-          Guardar Configuración Global
+        <Button onClick={handleManualSave} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 w-full sm:w-auto">
+          {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+          Guardar Todo
         </Button>
       </div>
     </div>
